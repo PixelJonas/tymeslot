@@ -52,4 +52,5 @@ jobs:
             -t ghcr.io/pixeljonas/tymeslot:${{ steps.meta.outputs.ref_tag }} \
             -t ghcr.io/pixeljonas/tymeslot:sha-${{ steps.meta.outputs.sha_short }} \
             .
-          docker push --all-tags ghcr.io/pixeljonas/tymeslot
+          docker push ghcr.io/pixeljonas/tymeslot:${{ steps.meta.outputs.ref_tag }}
+          docker push ghcr.io/pixeljonas/tymeslot:sha-${{ steps.meta.outputs.sha_short }}
