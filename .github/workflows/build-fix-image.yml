@@ -15,6 +15,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # Podman (this runner's docker-cli emulation layer) refuses short image
+      # names by default — "hexpm/elixir:..." in the Dockerfile's FROM line
+      # needs docker.io as an unqualified-search registry, or the build fails
+      # with "did not resolve to an alias and no unqualified-search
+      # registries are defined".
+      - name: Allow unqualified docker.io image names for podman
+        run: echo 'unqualified-search-registries = ["docker.io"]' >> /etc/containers/registries.conf
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
