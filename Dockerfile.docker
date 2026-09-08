@@ -16,7 +16,13 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
 # Configure debconf and install build dependencies
-RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
+#
+# Debian sources default to plain http:// (see /etc/apt/sources.list.d/debian.sources
+# in the base image), which some CI runner network policies block on egress while
+# still allowing 443 - force https to the same mirror so apt-get update doesn't hang
+# and time out.
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && \
+    echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
     apt-get update && apt-get install -y \
     git \
     curl \
@@ -78,7 +84,9 @@ RUN mix release tymeslot
 # which the entrypoint uses to wait for the external database.
 FROM debian:trixie-slim AS release-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# See the build stage's apt sources comment above - same http->https fix needed here.
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && apt-get install -y --no-install-recommends \
     postgresql-client \
     libssl3 \
     libncurses6 \
