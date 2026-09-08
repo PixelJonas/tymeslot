@@ -33,6 +33,13 @@ jobs:
           mkdir -p /etc/containers
           printf 'unqualified-search-registries = ["docker.io"]\n' > /etc/containers/registries.conf
 
+      - name: Diagnose egress (temporary)
+        run: |
+          for host in deb.debian.org hex.pm repo.hex.pm builds.hex.pm github.com objects.githubusercontent.com ghcr.io; do
+            echo "== $host =="
+            curl -sS --max-time 8 -o /dev/null -w "http_code=%{http_code} time=%{time_total}s\n" "https://$host/" || echo "curl failed rc=$?"
+          done
+
       - name: Build and push
         run: |
           docker build -f Dockerfile.docker \
