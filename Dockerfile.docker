@@ -36,6 +36,11 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# TEMPORARY diagnostic - remove once the builds.hex.pm timeout is root-caused.
+RUN (curl -4 -sS --max-time 8 -o /dev/null -w "v4 http_code=%{http_code} time=%{time_total}s\n" https://builds.hex.pm/ || echo "v4 curl failed rc=$?"); \
+    (curl -6 -sS --max-time 8 -o /dev/null -w "v6 http_code=%{http_code} time=%{time_total}s\n" https://builds.hex.pm/ || echo "v6 curl failed rc=$?"); \
+    getent ahosts builds.hex.pm || true
+
 # Set the working directory
 WORKDIR /app
 
