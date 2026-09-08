@@ -35,7 +35,16 @@ jobs:
 
       - name: Build and push
         run: |
-          docker build -f Dockerfile.docker \
+          # --network=host: this runner's podman uses rootful netavark bridge
+          # networking for build containers by default, which is confirmed
+          # unreliable here (reproduced directly: `podman run` with default
+          # bridge networking times out reaching repo.hex.pm/deb.debian.org,
+          # consistently, while `podman run --network=host` - sharing the
+          # runner pod's own already-working network namespace - succeeds
+          # every time). Building with host networking sidesteps the broken
+          # bridge/NAT path entirely instead of chasing per-destination
+          # workarounds.
+          docker build --network=host -f Dockerfile.docker \
             -t ghcr.io/pixeljonas/tymeslot:${{ steps.meta.outputs.ref_tag }} \
             -t ghcr.io/pixeljonas/tymeslot:sha-${{ steps.meta.outputs.sha_short }} \
             .
