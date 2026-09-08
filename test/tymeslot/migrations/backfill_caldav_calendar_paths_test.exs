@@ -94,6 +94,18 @@ defmodule Tymeslot.Migrations.BackfillCaldavCalendarPathsTest do
       assert calendar_paths(id) == [@holidays_path]
     end
 
+    test "repairs every provider in the CalDAV family, not only \"caldav\"" do
+      # Nextcloud, Radicale and the rest are stored under their own provider
+      # string but sync by path exactly as "caldav" does, and the companion
+      # change flags all of them for reconnection when calendar_paths is empty.
+      id = insert_integration(provider: "nextcloud", calendar_list: [entry(@booking_path)])
+
+      MigrationRunner.replay!(@version)
+
+      assert calendar_paths(id) == [@booking_path]
+      assert selected_paths(id) == [@booking_path]
+    end
+
     test "leaves a non-CalDAV integration alone" do
       # Google and Outlook sync by token, not by path, so an empty
       # calendar_paths is their normal state and must not be written to.

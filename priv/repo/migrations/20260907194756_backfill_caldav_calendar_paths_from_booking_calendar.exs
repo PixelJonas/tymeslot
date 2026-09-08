@@ -22,6 +22,10 @@ defmodule Tymeslot.Repo.Migrations.BackfillCaldavCalendarPathsFromBookingCalenda
   longer listed, are left alone: there is nothing to derive from, and the
   companion change surfaces them for reconnection.
 
+  The filter names every provider in the CalDAV family, since each is stored
+  under its own `provider` string and all of them sync by path. Google and
+  Outlook sync by token, so an empty `calendar_paths` is their normal state.
+
   Read-only calendars are never selected. An affected integration may also have
   had additional read-write calendars selected for availability; those are not
   recoverable and the owner can re-add them.
@@ -52,7 +56,7 @@ defmodule Tymeslot.Repo.Migrations.BackfillCaldavCalendarPathsFromBookingCalenda
       SELECT i.id AS integration_id, (c->>'path') AS path
       FROM calendar_integrations AS i,
            unnest(i.calendar_list) AS c
-      WHERE i.provider = 'caldav'
+      WHERE i.provider IN ('caldav', 'radicale', 'nextcloud', 'zimbra', 'mailbox_org', 'apple', 'baikal')
         AND COALESCE(array_length(i.calendar_paths, 1), 0) = 0
         AND i.default_booking_calendar_id IS NOT NULL
         AND (c->>'id') = i.default_booking_calendar_id
