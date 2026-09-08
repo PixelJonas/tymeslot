@@ -36,13 +36,29 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# TEMPORARY diagnostic - remove once the builds.hex.pm timeout is root-caused.
-RUN for host in builds.hex.pm repo.hex.pm hex.pm deb.debian.org; do \
-      getent ahosts "$host" | head -1; \
-      for i in 1 2 3; do \
-        curl -4 -sS --max-time 8 -o /dev/null -w "$host attempt $i: http_code=%{http_code} time=%{time_total}s\n" "https://$host/" || echo "$host attempt $i: curl failed rc=$?"; \
-      done; \
-    done
+# Warm up egress to Hex's CDN before invoking mix.
+#
+# Diagnosed on this runner: the *first* outbound HTTPS connection from a fresh
+# build container to any brand-new destination IP can take several seconds
+# longer than normal (looks like reactive network-flow programming on the
+# runner's SDN, not a domain/port block - every host tested, including ones
+# that work fine on every later attempt, ate this same one-time delay). Mix's
+# built-in Hex bootstrap installer has a hardcoded 60s httpc timeout and
+# occasionally loses that race, failing with "Could not install Hex because
+# Mix could not download metadata at https://builds.hex.pm/...". A throwaway
+# curl (allowed to fail) pre-pays that one-time cost here, before anything
+# depends on it succeeding quickly.
+RUN curl -sS --max-time 45 -o /dev/null https://repo.hex.pm/ || true
+
+# Install Hex/rebar explicitly and retry - belt-and-suspenders alongside the
+# warm-up above, in case the delay is occasionally longer than the warm-up's
+# own timeout allows for.
+RUN for i in 1 2 3 4 5; do \
+      mix local.hex --force --if-missing && mix local.rebar --force --if-missing && exit 0; \
+      echo "hex/rebar install attempt $i failed, retrying..." >&2; \
+      sleep 5; \
+    done; \
+    echo "hex/rebar install failed after 5 attempts" >&2; exit 1
 
 # Set the working directory
 WORKDIR /app
@@ -57,7 +73,15 @@ COPY mix.exs mix.lock ./
 COPY config ./config
 
 # Get dependencies using committed lock file
-RUN mix deps.get --only prod
+# Retry - see the warm-up comment above; deps.get's own hex.pm/repo.hex.pm
+# requests aren't as exposed since the network path is already warm by now,
+# but a retry here is cheap insurance against a genuinely transient blip.
+RUN for i in 1 2 3; do \
+      mix deps.get --only prod && exit 0; \
+      echo "deps.get attempt $i failed, retrying..." >&2; \
+      sleep 5; \
+    done; \
+    echo "deps.get failed after 3 attempts" >&2; exit 1
 
 # Copy the rest of the application code. Wipe any locally-built assets first
 # so the image build is hermetic — assets are always produced by mix assets.deploy
