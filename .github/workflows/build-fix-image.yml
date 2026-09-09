@@ -26,12 +26,29 @@ jobs:
         id: meta
         run: |
           echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          echo "ref_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "ref_tag=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure podman unqualified-search registry
+        run: |
+          mkdir -p /etc/containers
+          printf 'unqualified-search-registries = ["docker.io"]\n' > /etc/containers/registries.conf
 
       - name: Build and push
         run: |
-          docker build -f Dockerfile.docker \
+          # --network=host: this runner's podman uses rootful netavark bridge
+          # networking for build containers by default, which is confirmed
+          # unreliable here (reproduced directly: `podman run` with default
+          # bridge networking times out reaching repo.hex.pm/deb.debian.org,
+          # consistently, while `podman run --network=host` - sharing the
+          # runner pod's own already-working network namespace - succeeds
+          # every time). Building with host networking sidesteps the broken
+          # bridge/NAT path entirely instead of chasing per-destination
+          # workarounds.
+          docker build --network=host -f Dockerfile.docker \
             -t ghcr.io/pixeljonas/tymeslot:${{ steps.meta.outputs.ref_tag }} \
             -t ghcr.io/pixeljonas/tymeslot:sha-${{ steps.meta.outputs.sha_short }} \
             .
-          docker push --all-tags ghcr.io/pixeljonas/tymeslot
+          # podman's docker-CLI shim doesn't support `docker push --all-tags` -
+          # push each tag explicitly instead.
+          docker push ghcr.io/pixeljonas/tymeslot:${{ steps.meta.outputs.ref_tag }}
+          docker push ghcr.io/pixeljonas/tymeslot:sha-${{ steps.meta.outputs.sha_short }}
