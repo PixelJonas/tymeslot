@@ -448,6 +448,96 @@ defmodule Tymeslot.Integrations.Calendar.Google.CalendarAPITest do
     end
   end
 
+  describe "list_events_incremental/1" do
+    # list_events_incremental/1 also runs through CalendarCircuitBreaker.
+    setup do
+      breaker_pid = Process.whereis(:calendar_breaker_google)
+      Mox.allow(Tymeslot.HTTPClientMock, self(), breaker_pid)
+      :ok
+    end
+
+    test "single-page response returns events and the sync token" do
+      user = insert(:user)
+
+      integration =
+        insert(:calendar_integration,
+          user: user,
+          provider: "google",
+          access_token_encrypted: Encryption.encrypt("valid_token"),
+          token_expires_at: DateTime.add(DateTime.utc_now(), 3600),
+          google_sync_token: "sync_old"
+        )
+
+      expect(Tymeslot.HTTPClientMock, :request, fn :get, url, _body, _headers, _opts ->
+        assert String.contains?(url, "syncToken=sync_old")
+        refute String.contains?(url, "pageToken=")
+
+        {:ok,
+         %Req.Response{
+           status: 200,
+           body:
+             Jason.encode!(%{
+               "items" => [%{"id" => "evt1"}],
+               "nextSyncToken" => "sync_new"
+             })
+         }}
+      end)
+
+      assert {:ok, %{events: events, next_sync_token: "sync_new"}} =
+               CalendarAPI.list_events_incremental(integration)
+
+      assert Enum.map(events, & &1["id"]) == ["evt1"]
+    end
+
+    # Regression test: a multi-page delta used to be truncated after page 1,
+    # and since Google only returns `nextSyncToken` on the final page, the
+    # stored sync token was never advanced — every later run re-fetched the
+    # same stale first page forever, silently dropping every event beyond it.
+    test "multi-page response accumulates events across pages and returns the final sync token" do
+      user = insert(:user)
+
+      integration =
+        insert(:calendar_integration,
+          user: user,
+          provider: "google",
+          access_token_encrypted: Encryption.encrypt("valid_token"),
+          token_expires_at: DateTime.add(DateTime.utc_now(), 3600),
+          google_sync_token: "sync_old"
+        )
+
+      expect(Tymeslot.HTTPClientMock, :request, 2, fn :get, url, _body, _headers, _opts ->
+        if String.contains?(url, "pageToken=page2") do
+          {:ok,
+           %Req.Response{
+             status: 200,
+             body:
+               Jason.encode!(%{
+                 "items" => [%{"id" => "evt3"}, %{"id" => "evt4"}],
+                 "nextSyncToken" => "sync_final"
+               })
+           }}
+        else
+          assert String.contains?(url, "syncToken=sync_old")
+
+          {:ok,
+           %Req.Response{
+             status: 200,
+             body:
+               Jason.encode!(%{
+                 "items" => [%{"id" => "evt1"}, %{"id" => "evt2"}],
+                 "nextPageToken" => "page2"
+               })
+           }}
+        end
+      end)
+
+      assert {:ok, %{events: events, next_sync_token: "sync_final"}} =
+               CalendarAPI.list_events_incremental(integration)
+
+      assert Enum.map(events, & &1["id"]) == ["evt1", "evt2", "evt3", "evt4"]
+    end
+  end
+
   describe "refresh_token/1" do
     test "calls Google token endpoint and returns new tokens" do
       user = insert(:user)
