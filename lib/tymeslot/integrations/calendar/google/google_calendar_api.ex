@@ -249,31 +249,48 @@ defmodule Tymeslot.Integrations.Calendar.Google.CalendarAPI do
     sync_token = integration.google_sync_token
 
     AccessToken.with_access_token(integration, &__MODULE__.refresh_token/1, fn token ->
-      result =
-        CalendarCircuitBreaker.call(:google, fn ->
-          make_request(:get, "/calendars/#{URI.encode(calendar_id)}/events", token, %{
-            "syncToken" => sync_token
-          })
-        end)
-
-      case result do
-        {:ok, response} when is_map(response) ->
-          {:ok,
-           %{
-             events: response["items"] || [],
-             next_sync_token: response["nextSyncToken"]
-           }}
-
-        {:ok, error} ->
-          error
-
-        {:error, :circuit_open} = error ->
-          error
-
-        other ->
-          other
-      end
+      fetch_incremental_page(token, calendar_id, sync_token, nil, [])
     end)
+  end
+
+  # Google only returns `nextSyncToken` on the last page of a sync-token
+  # listing — every earlier page carries `nextPageToken` instead. Stopping
+  # after page 1 (as this used to) meant `next_sync_token` came back `nil`
+  # whenever a delta spanned more than one page, so the stored sync token was
+  # never advanced and every subsequent run re-fetched the same stale first
+  # page forever, silently missing every change beyond it.
+  defp fetch_incremental_page(token, calendar_id, sync_token, page_token, acc) do
+    params =
+      %{"syncToken" => sync_token}
+      |> maybe_put_page_token(page_token)
+
+    result =
+      CalendarCircuitBreaker.call(:google, fn ->
+        make_request(:get, "/calendars/#{URI.encode(calendar_id)}/events", token, params)
+      end)
+
+    case result do
+      {:ok, response} when is_map(response) ->
+        items = response["items"] || []
+        acc = Enum.reverse(items, acc)
+
+        case response["nextPageToken"] do
+          nil ->
+            {:ok, %{events: Enum.reverse(acc), next_sync_token: response["nextSyncToken"]}}
+
+          next_page ->
+            fetch_incremental_page(token, calendar_id, sync_token, next_page, acc)
+        end
+
+      {:ok, error} ->
+        error
+
+      {:error, :circuit_open} = error ->
+        error
+
+      other ->
+        other
+    end
   end
 
   @doc """
